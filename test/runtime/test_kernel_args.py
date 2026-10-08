@@ -6,7 +6,7 @@ from tinygrad.device import TinyELF
 from tinygrad.dtype import AddrSpace, dtypes
 from tinygrad.engine.realize import get_call_outs_ins, run_linear
 from tinygrad.helpers import Context, Target, cpu_events, ProfilePointEvent
-from tinygrad.uop.ops import KernelInfo, Ops, UOp
+from tinygrad.uop.ops import AxisType, KernelInfo, Ops, UOp
 from test.helpers import needs_second_gpu
 
 class TestKernelArgs(unittest.TestCase):
@@ -20,6 +20,25 @@ class TestKernelArgs(unittest.TestCase):
                                   Tensor.empty(3, dtype=dtypes.int32), x, fxn=kernel)[1]
     for value in (1, 2, 3, 4):
       self.assertEqual(run(Tensor([value]*3, dtype=dtypes.int32).realize()).tolist(), [value+5]*3)
+
+  def test_custom_kernel_launch_extent_jit(self):
+    def kernel(n, out):
+      idx = UOp.range(n, 0, AxisType.GLOBAL if Device.DEFAULT.split(':')[0] in ('AMD', 'NV', 'CUDA', 'METAL', 'NULL') else AxisType.LOOP)
+      return out[idx].store(n).end(idx).sink(arg=KernelInfo(name='jit_scalar_extent', opts_to_apply=()))
+    @TinyJit
+    def run(n):
+      return Tensor.custom_kernel(Tensor(n), Tensor.zeros(4, dtype=dtypes.int32).contiguous(), fxn=kernel)[1]
+    for value in (2, 4, 3, 1):
+      self.assertEqual(run(UOp.variable('caller_extent', 1, 4, dtypes.int32).bind(value)).tolist(), [value]*value + [0]*(4-value))
+
+  def test_scalar_launch_extent(self):
+    out = Tensor.zeros(4, dtype=dtypes.int32).contiguous().realize().uop
+    p = UOp.param(1, dtypes.int32, 4)
+    n = UOp.param(0, dtypes.int32, name='extent', vmin_vmax=(1, 4), addrspace=AddrSpace.ALU)
+    idx = UOp.range(n, 0, AxisType.GLOBAL if Device.DEFAULT.split(':')[0] in ('AMD', 'NV', 'CUDA', 'METAL', 'NULL') else AxisType.LOOP)
+    prg = to_program(p[idx].store(7).end(idx).sink(arg=KernelInfo(name='scalar_extent', opts_to_apply=())), Device[Device.DEFAULT].renderer)
+    run_linear(UOp(Ops.LINEAR, src=(prg.call(UOp.variable('caller_extent', 1, 4, dtypes.int32).bind(3), out),)), wait=True)
+    self.assertEqual(out.buffer.as_memoryview().cast('i').tolist(), [7, 7, 7, 0])
 
   def test_custom_kernel_scalar_jit(self):
     def kernel(n, out, x):

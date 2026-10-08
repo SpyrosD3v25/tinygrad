@@ -54,7 +54,9 @@ def get_call_name(call:UOp, bufs:Sequence[Buffer|UOp], var_vals:dict[str, int]|N
 def estimate_uop(call:UOp) -> Estimates:
   call = call.without_after
   if isinstance(call.arg.aux, HCQInfo): return call.arg.aux.estimates
-  if (ast:=call.body).op is Ops.PROGRAM: return ast.src[0].arg.estimates or Estimates()
+  if (ast:=call.body).op is Ops.PROGRAM:
+    e, bindings = ast.src[0].arg.estimates or Estimates(), dict(get_call_prg_args(call, ast))
+    return Estimates(*(s.substitute(bindings).ssimplify() if isinstance(s, UOp) else s for s in (e.ops, e.lds, e.mem)))
   if ast.op is Ops.STORE or (ast.op is Ops.CUSTOM_FUNCTION and ast.arg.name == "encdec"):
     return Estimates(lds=(nbytes:=prod(call.src[1].shape) * call.src[1].dtype.itemsize), mem=nbytes)
   return Estimates()
