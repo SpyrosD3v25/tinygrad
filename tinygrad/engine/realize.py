@@ -163,6 +163,7 @@ def exec_kernel(ctx:ExecContext, call:UOp, ast:UOp, devices=None) -> list[float|
   ets:list[float|None] = []
   resolved = resolve_params(call, ctx.input_uops, ast.arg.globals)
   for device, (bufs, device_vars) in zip(devices or to_tuple(get_call_arg_uops(call)[0].device), unwrap_multi(call, resolved)):
+    if devices is None and device.split(":")[0] in HOST_DEVS: Device[device].synchronize(ctx.timeout)
     var_vals = {**ctx.var_vals, **device_vars}
     buffers = dict(zip(ast.arg.globals, bufs))
     rt = get_runtime(device, ast, cache=ctx.cache)
@@ -190,7 +191,6 @@ def exec_hcq(ctx:ExecContext, call:UOp, ast:UOp) -> list[float|None]:
   ctx = replace(ctx, wait=ctx.wait and not info.skip_wait,
                 var_vals={**ctx.var_vals, **{k: v for d in info.device for k, v in cast(Any, Device[d]).var_vals.items()}})
   ets = exec_kernel(ctx, call, ast, devices=(Device[info.device[0]].host,))
-  for host, dev in info.host_deps: Device[host].pending[Device[dev]] = Device[dev].timeline.host.view(fmt='Q')[1]
   if not (ctx.wait or PROFILE): return ets
 
   slots = {d: cast(Buffer, call.src[1 + i].buffer) for d, i in info.slots}
@@ -262,7 +262,7 @@ def lower_and_compile(linear:UOp, verbose=True) -> UOp:
   return linear.substitute({c: c.replace(src=(to_program_cache[keys[c]], *c.src[1:])) for c in ar},
                            name="precompile kernels")
 
-from tinygrad.runtime.support.hcq2 import hcq_compile, hcq_link, HCQInfo # noqa: E402 # down here, hcq2 imports realize
+from tinygrad.runtime.support.hcq2 import hcq_compile, hcq_link, HCQInfo, HOST_DEVS # noqa: E402 # down here, hcq2 imports realize
 
 pm_exec = PatternMatcher([
   (UPat(Ops.CALL, src=(UPat(Ops.STORE, name="ast"),), name="call", allow_any_len=True), exec_copy),
