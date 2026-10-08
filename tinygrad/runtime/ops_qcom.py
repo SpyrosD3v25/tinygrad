@@ -106,8 +106,7 @@ class QCOMComputeQueue(HWQueue):
     else: args += list(zip(data.buf_offs, kernel_args(call, prg, self.devs, images=False)))
 
     def _tex(b, ibo=False):
-      p, buf = b
-      imgdt, shape = p.arg.dtype, p.arg.image
+      imgdt, shape, buf = b[0].arg.dtype, b[0].arg.image, b[1]
       pitch = shape[1] * 4 * imgdt.itemsize
       fmt = mesa.FMT6_32_32_32_32_FLOAT if imgdt.itemsize == 4 else mesa.FMT6_16_16_16_16_FLOAT
       return [qreg.a6xx_tex_const_0(fmt=fmt) if ibo else qreg.a6xx_tex_const_0(0x8, swiz_x=0, swiz_y=1, swiz_z=2, swiz_w=3, fmt=fmt),
