@@ -1300,7 +1300,7 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
 
   def to_elf(self) -> TinyELF:
     assert self.op is Ops.PROGRAM and isinstance(self.arg, ProgramInfo), "to_elf should only be called on a PROGRAM ast"
-    params = tuple(u for u in self.src[1].src if u.op is Ops.PARAM and u.addrspace != AddrSpace.ALU)
+    params = tuple(u for u in (self.arg.params or self.src[1].src) if u.op is Ops.PARAM and u.addrspace != AddrSpace.ALU)
     # sig slots are compact: buffers in globals order (runtimes launch buffers in that order), then vars. raw call-arg
     # positions skip buffers for kernels using a sparse subset of the call's buffers (CL binds bufs[slot])
     gmap = {s:j for j, s in enumerate(self.arg.globals)}
@@ -1341,6 +1341,7 @@ class ProgramInfo:
   outs: tuple[int, ...] = ()
   ins: tuple[int, ...] = ()
   target: Target = Target()
+  params: tuple[UOp, ...] = () # ISA lowering can replace stack arguments with loads
 
   def launch_dims(self, var_vals:dict[str, int]) -> tuple[tuple[int, ...], tuple[int, ...]]:
     global_size = tuple([sym_infer(sz, var_vals) for sz in self.global_size])  # type: ignore[arg-type]
