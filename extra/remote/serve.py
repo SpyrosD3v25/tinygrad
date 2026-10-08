@@ -79,7 +79,6 @@ def handle(conn, cmd, dev_id, bar, arg0, arg1, arg2):
     programs.append(Device["CPU"].runtime(TinyELF(conn.recv(arg0, socket.MSG_WAITALL), "hcq_submit", Target("CPU"), ())))
     conn.sendall(resp(len(programs) - 1))
   elif cmd == RemoteCmd.EXEC_PROG:
-    # The wire format already contains arguments in native ABI order as 64-bit words.
     et = programs[arg0](*struct.unpack(f'<{arg1}Q', conn.recv(arg1 * 8, socket.MSG_WAITALL)), wait=bool(arg2))
     if (mock:=sys.modules.get("test.mockgpu.mockgpu")) is not None: # native programs bypass the mock's memoryview hooks
       for d in mock.drivers: d._emulate_execute()
