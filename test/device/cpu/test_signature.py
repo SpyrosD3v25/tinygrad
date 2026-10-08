@@ -13,13 +13,13 @@ class TestKernelSignature(unittest.TestCase):
     out = UOp.new_buffer('CPU', 1, dtypes.int32)
     params = [UOp.param(i, dtypes.int32, 1) for i in range(9)]
     factor = UOp.variable('factor', 0, 10, dtypes.int32)
-    sink = params[-1].index(0).store(sum(p.index(0).load() for p in params[:-1]) + factor).sink(
+    sink = params[-1].index(0).store(sum((i+1)*p.index(0).load() for i,p in enumerate(params[:-1])) + factor).sink(
       arg=KernelInfo(name='stack_signature'), tag=1)
     prg = to_program(sink, X86Renderer(Target('CPU', 'X86', Device['CPU'].arch)))
     self.assertEqual([p.arg.slot for p in prg.arg.params if not p.is_variable], list(range(9)))
     self.assertEqual([p.arg.slot for p in prg.to_elf().signature], [-1, *range(9)])
     run_linear(UOp(Ops.LINEAR, src=(prg.call(*inputs, out),)), var_vals={'factor': 2}, wait=True)
-    self.assertEqual(out.buffer.as_memoryview().cast('i').tolist(), [38])
+    self.assertEqual(out.buffer.as_memoryview().cast('i').tolist(), [206])
 
   def test_sparse_buffer_signature(self):
     p = UOp.param(3, dtypes.int32, 1)
