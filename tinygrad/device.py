@@ -351,13 +351,12 @@ class TinyELF:
   lib: bytes
   name: str
   target: Target
-  signature: tuple[tuple[str|None, int, DType, tuple], ...]
+  signature: tuple[KernelParam, ...]
   profile_key: bytes|None = None
 
   @staticmethod
-  def iter_sig(types:Iterable[DType|tuple[str|None, int, DType, tuple]], offset:int=0) -> Generator[tuple[int, DType], None, None]:
+  def iter_sig(types:Iterable[DType], offset:int=0) -> Generator[tuple[int, DType], None, None]:
     for dt in types:
-      if isinstance(dt, tuple): dt = dt[2]
       yield (offset:=round_up(offset, dt.itemsize)), dt
       offset += dt.itemsize
 
@@ -371,7 +370,7 @@ class TinyELF:
 
 class Program(Generic[DeviceType]):
   def __init__(self, dev:DeviceType, obj:TinyELF): pass
-  def __call__(self, *bufs, global_size:tuple[int,int,int]=(1,1,1), local_size:tuple[int,int,int]=(1,1,1), vals:tuple[int, ...]=(),
+  def __call__(self, *args, global_size:tuple[int,int,int]=(1,1,1), local_size:tuple[int,int,int]=(1,1,1),
                wait=False) -> float|None: pass
 
 class Compiled:

@@ -15,16 +15,11 @@ from tinygrad.engine.worker import get_worker_pool, terminate_worker_pool
 
 def get_call_args(call:UOp) -> tuple[tuple[int, UOp], ...]: return tuple((i,s) for i,s in enumerate(call.src[1:]) if s.addrspace is not AddrSpace.ALU)
 def get_call_arg_uops(call:UOp) -> tuple[UOp, ...]: return tuple(s for _,s in get_call_args(call))
-def get_call_var_uops(call:UOp, prg:UOp) -> list[UOp]:
-  # a bound value is a bare CONST: the Variable states the width
-  bound = {s.expr: UOp.const(s.arg.val) for s in call.src[1:] if s.is_bound_var}
-  return [bound.get(v.expr, v) for v in prg.arg.vars]
-
-
 def get_call_prg_args(call:UOp, prg:UOp) -> Iterator[tuple[UOp, UOp]]:
   bound = {s.expr: UOp.const(s.arg.val) for s in call.src[1:] if s.is_bound_var}  # a bound value is a bare CONST: the Variable states the width
   for p in (p for p in (prg.arg.params or prg.src[1].src) if p.op is Ops.PARAM):
-    yield p, bound.get(p.expr, p) if p.arg.addrspace is AddrSpace.ALU else call.src[1+p.arg.slot]
+    a = bound.get(p.expr, p) if p.arg.slot < 0 else call.src[1+p.arg.slot]
+    yield p, UOp.const(a.arg.val) if a.is_bound_var else a
 
 def get_call_outs_ins(call:UOp, compact:bool=False) -> tuple[tuple[int, ...], tuple[int, ...]]:
   ast = call.body
@@ -166,16 +161,17 @@ def exec_copy(ctx:ExecContext, call:UOp, ast:UOp) -> list[float|None]:
 
 def exec_kernel(ctx:ExecContext, call:UOp, ast:UOp, devices=None) -> list[float|None]:
   ets:list[float|None] = []
-  resolved = resolve_params(call, ctx.input_uops)
-  for device, (bufs, device_vars) in zip(devices or to_tuple(call.src[1].device), unwrap_multi(call, [resolved[i] for i in ast.arg.globals])):
+  resolved = resolve_params(call, ctx.input_uops, ast.arg.globals)
+  for device, (bufs, device_vars) in zip(devices or to_tuple(get_call_arg_uops(call)[0].device), unwrap_multi(call, resolved)):
     if devices is None and device.split(":")[0] in HOST_DEVS: Device[device].synchronize(ctx.timeout)
     var_vals = {**ctx.var_vals, **device_vars}
-    prg_bufs = [b.ensure_allocated() for b in bufs]
+    buffers = dict(zip(ast.arg.globals, bufs))
     rt = get_runtime(device, ast, cache=ctx.cache)
     global_sz, local_sz = ast.arg.launch_dims(var_vals)
-    try: vals = tuple(var_vals[v.expr] if v.is_variable else _resolve(call.src[1 + v.arg.slot], ctx.input_uops).val for v in ast.arg.vars)
+    try: args = [(var_vals[a.expr] if a.is_variable else _resolve(a, ctx.input_uops).val) if p.arg.addrspace is AddrSpace.ALU else
+                 buffers[p.arg.slot].ensure_allocated().get_buf(device) for p,a in get_call_prg_args(call, ast)]
     except KeyError as e: raise RuntimeError(f"unbound Variable {e}") from None
-    ets.append(rt(*[b.get_buf(device) for b in prg_bufs], global_size=global_sz, local_size=local_sz, vals=vals, wait=ctx.wait, timeout=ctx.timeout))
+    ets.append(rt(*args, global_size=global_sz, local_size=local_sz, wait=ctx.wait, timeout=ctx.timeout))
   return ets
 
 def exec_validate(ctx:ExecContext, call:UOp, ast:UOp) -> list[float|None]:
