@@ -73,8 +73,7 @@ class WebGPUProgram(Program['WebGpuDevice']):
     bind_entries = (webgpu.WGPUBindGroupLayoutEntry * (1+len(self.signature)))()
     bindings = (webgpu.WGPUBindGroupEntry * (1+len(self.signature)))()
     for i,(p,a) in enumerate(zip((None, *self.signature), (float('inf'), *args), strict=True)):
-      ty = 'Uniform' if p is None or p.arg.addrspace is AddrSpace.ALU else 'Storage'
-      buf = self.dev.create_uniform(a) if ty == 'Uniform' else a
+      ty, buf = ('Uniform', self.dev.create_uniform(a)) if p is None or p.arg.addrspace is AddrSpace.ALU else ('Storage', a)
       bind_entries[i] = webgpu.WGPUBindGroupLayoutEntry(binding=i, visibility=webgpu.WGPUShaderStage_Compute,
                         buffer=webgpu.WGPUBufferBindingLayout(type=getattr(webgpu, f'WGPUBufferBindingType_{ty}')))
       bindings[i] = webgpu.WGPUBindGroupEntry(binding=i, buffer=buf, offset=0, size=webgpu.wgpuBufferGetSize(buf))
