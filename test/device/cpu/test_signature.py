@@ -15,7 +15,7 @@ class TestKernelSignature(unittest.TestCase):
       arg=KernelInfo(name='stack_signature'), tag=1)
     prg = to_program(sink, Device['CPU:X86'].renderer)
     self.assertEqual([p.arg.slot for p in prg.arg.params if not p.is_variable], list(range(9)))
-    self.assertEqual([p[1] for p in prg.to_elf().signature], list(range(10)))
+    self.assertEqual([p.arg.slot for p in prg.to_elf().signature], [-1, *range(9)])
     run_linear(UOp(Ops.LINEAR, src=(prg.call(*inputs, out, factor.bind(2)),)), wait=True)
     self.assertEqual(out.buffer.as_memoryview().cast('i').tolist(), [38])
 
@@ -23,6 +23,6 @@ class TestKernelSignature(unittest.TestCase):
     p = UOp.param(3, dtypes.int32, 1)
     prg = to_program(p.index(0).store(7).sink(arg=KernelInfo(name='sparse_signature'), tag=1), Device['CPU:X86'].renderer)
     self.assertEqual(prg.arg.globals, (3,))
-    self.assertEqual([p[1] for p in prg.to_elf().signature], [0])
+    self.assertEqual([p.arg.slot for p in prg.to_elf().signature], [3])
 
 if __name__ == '__main__': unittest.main()
