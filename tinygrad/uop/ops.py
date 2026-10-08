@@ -1338,7 +1338,7 @@ class ProgramInfo:
   outs: tuple[int, ...] = ()
   ins: tuple[int, ...] = ()
   target: Target = Target()
-  params: tuple[UOp, ...] = () # ISA lowering can replace stack arguments with loads
+  params: tuple[UOp, ...] = ()
 
   def launch_dims(self, var_vals:dict[str, int]) -> tuple[tuple[int, ...], tuple[int, ...]]:
     global_size = tuple([sym_infer(sz, var_vals) for sz in self.global_size])  # type: ignore[arg-type]
