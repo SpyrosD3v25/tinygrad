@@ -1228,6 +1228,8 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
       return UOp(Ops.PARAM, src=(UOp.const(prod(to_max_shape(self.shard_shape))),),
                  arg=ParamArg(slot, self.dtype, name=name, device=self.device)).view_as(self.shard_shape, self.axis)
     return UOp.param(slot, self.dtype, self._shape, self.device, name=name)
+  @property
+  def param_name(self) -> str: return self.arg.name.replace(":", "_") if self.arg.name is not None else f"data{self.arg.slot}"
   def view_as(self:UOp, shape:tuple[sint, ...], axis:int|None=None) -> UOp:
     """view flat storage as the given (possibly symbolic) shape, optionally sharded on axis, the UNSHARD gives back the multiplied shape"""
     max_shape = to_max_shape(shape)
