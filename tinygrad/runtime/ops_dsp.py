@@ -65,9 +65,8 @@ class DSPProgram(Program['DSPDevice']):
     pra, fds, attrs, _ = rpc_prep_args(ins=[var_vals_mv:=memoryview(bytearray(len(self.signature)*8)),
                                          memoryview(array.array('I', [b.offset for b in bufs]))],
                                        outs=[timer:=memoryview(bytearray(8)).cast('Q')], in_fds=[b.share_info.fd for b in bufs])
-    for i,(p,a) in enumerate(zip(self.signature, args)):
-      struct.pack_into(unwrap(p.arg.dtype.fmt) if p.arg.addrspace == AddrSpace.ALU else 'i', var_vals_mv, i*8,
-                       a if p.arg.addrspace == AddrSpace.ALU else a.size)
+    for i,(p,a) in enumerate(zip(self.signature, args)): struct.pack_into(unwrap(p.arg.dtype.fmt) if p.arg.addrspace == AddrSpace.ALU else 'i',
+      var_vals_mv, i*8, a if p.arg.addrspace == AddrSpace.ALU else a.size)
     self.dev.exec_lib(self.lib, rpc_sc(method=2, ins=2, outs=1, fds=len(bufs)), pra, fds, attrs)
     return timer[0] / 1e6
 
