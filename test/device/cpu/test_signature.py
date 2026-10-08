@@ -16,7 +16,7 @@ class TestKernelSignature(unittest.TestCase):
     prg = to_program(sink, Device['CPU:X86'].renderer)
     self.assertEqual([p.arg.slot for p in prg.arg.params if not p.is_variable], list(range(9)))
     self.assertEqual([p[1] for p in prg.to_elf().signature], list(range(10)))
-    run_linear(UOp(Ops.LINEAR, src=(prg.call(*inputs, out, factor.bind(2)),)), wait=True)
+    run_linear(UOp(Ops.LINEAR, src=(prg.call(*inputs, out),)), var_vals={'factor': 2}, wait=True)
     self.assertEqual(out.buffer.as_memoryview().cast('i').tolist(), [38])
 
   def test_sparse_buffer_signature(self):
