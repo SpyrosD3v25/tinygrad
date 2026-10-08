@@ -1,15 +1,53 @@
 import itertools, struct, unittest, weakref
 from dataclasses import replace
-from tinygrad import Device, Tensor
+from tinygrad import Device, Tensor, TinyJit
 from tinygrad.codegen import to_program
 from tinygrad.device import TinyELF
 from tinygrad.dtype import AddrSpace, dtypes
 from tinygrad.engine.realize import get_call_outs_ins, run_linear
-from tinygrad.helpers import Context, Target
+from tinygrad.helpers import Context, Target, cpu_events, ProfilePointEvent
 from tinygrad.uop.ops import KernelInfo, Ops, UOp
 from test.helpers import needs_second_gpu
 
 class TestKernelArgs(unittest.TestCase):
+  def test_custom_kernel_constant_scalar_jit(self):
+    def kernel(n, out, x):
+      idx = UOp.range(3, 0)
+      return out[idx].store(x[idx] + n).end(idx).sink(arg=KernelInfo(name='jit_constant_scalar'))
+    @TinyJit
+    def run(x):
+      return Tensor.custom_kernel(Tensor(UOp.variable('constant_scalar', 0, 10, dtypes.int32).bind(5)),
+                                  Tensor.empty(3, dtype=dtypes.int32), x, fxn=kernel)[1]
+    for value in (1, 2, 3, 4):
+      self.assertEqual(run(Tensor([value]*3, dtype=dtypes.int32).realize()).tolist(), [value+5]*3)
+
+  def test_custom_kernel_scalar_jit(self):
+    def kernel(n, out, x):
+      idx = UOp.range(3, 0)
+      return out[idx].store(x[idx] + n).end(idx).sink(arg=KernelInfo(name='jit_scalar_order'))
+    @TinyJit
+    def run(x, n):
+      return Tensor.custom_kernel(Tensor(n), Tensor.empty(3, dtype=dtypes.int32), x, fxn=kernel)[1]
+    x = Tensor([1, 2, 3], dtype=dtypes.int32).realize()
+    for value in (3, 5, 7, 2):
+      self.assertEqual(run(x, UOp.variable('n', 0, 10, dtypes.int32).bind(value)).tolist(), [1+value, 2+value, 3+value])
+
+  def test_custom_kernel_scalar_order(self):
+    for order in itertools.permutations(('out', 'x', 'scalar')):
+      for value in (3, 5):
+        with self.subTest(order=order, value=value):
+          def kernel(*args):
+            p = dict(zip(order, args))
+            idx = UOp.range(3, 0)
+            return p['out'][idx].store(p['x'][idx] + p['scalar']).end(idx).sink(arg=KernelInfo(name='custom_scalar_order'))
+          args = {'out': Tensor.empty(3, dtype=dtypes.int32), 'x': Tensor([1, 2, 3], dtype=dtypes.int32).realize(),
+                  'scalar': Tensor(UOp.variable(f'caller_{value}', 0, 10, dtypes.int32).bind(value))}
+          other = (Tensor([1], dtype=dtypes.int32) + Tensor(UOp.variable('other', 0, 100, dtypes.int32).bind(70))).contiguous()
+          out = Tensor.custom_kernel(*(args[name] for name in order), fxn=kernel)[order.index('out')]
+          Tensor.realize(other, out)
+          self.assertEqual(out.tolist(), [1+value, 2+value, 3+value])
+          self.assertEqual(other.tolist(), [71])
+
   def test_signature_does_not_own_uops(self):
     p = UOp.param(997, dtypes.int32, 997, name='signature_lifetime')
     ref, signature = weakref.ref(p), (p.kernel_param,)
@@ -65,13 +103,15 @@ class TestKernelArgs(unittest.TestCase):
 
   def test_bound_scalar_param(self):
     for scalar_slot in (0, 1):
-      out = UOp.new_buffer(Device.DEFAULT, 1, dtypes.int32)
-      scalar = UOp.param(scalar_slot, dtypes.int32, vmin_vmax=(0, 10), addrspace=AddrSpace.ALU)
-      p = UOp.param(1-scalar_slot, dtypes.int32, 1)
-      prg = to_program(p.index(0).store(scalar).sink(arg=KernelInfo(name='bounded_param'), tag=1), Device[Device.DEFAULT].renderer)
-      args = (UOp.variable('caller', 0, 10, dtypes.int32).bind(4), out)
-      run_linear(UOp(Ops.LINEAR, src=(prg.call(*(args if scalar_slot == 0 else args[::-1])),)), wait=True)
-      self.assertEqual(out.buffer.as_memoryview().cast('i').tolist(), [4])
+      for value in (UOp.variable('caller', 0, 10, dtypes.int32).bind(4), UOp.const(4, dtypes.int32)):
+        with self.subTest(scalar_slot=scalar_slot, value=value.op):
+          out = UOp.new_buffer(Device.DEFAULT, 1, dtypes.int32)
+          scalar = UOp.param(scalar_slot, dtypes.int32, vmin_vmax=(0, 10), name='callee', addrspace=AddrSpace.ALU)
+          p = UOp.param(1-scalar_slot, dtypes.int32, 1)
+          prg = to_program(p.index(0).store(scalar).sink(arg=KernelInfo(name='bounded_param'), tag=1), Device[Device.DEFAULT].renderer)
+          args = (value, out)
+          run_linear(UOp(Ops.LINEAR, src=(prg.call(*(args if scalar_slot == 0 else args[::-1])),)), wait=True)
+          self.assertEqual(out.buffer.as_memoryview().cast('i').tolist(), [4])
 
   def test_validate_order(self):
     x = Tensor([1, 2, 3], dtype=dtypes.int32).realize().uop
@@ -82,6 +122,19 @@ class TestKernelArgs(unittest.TestCase):
     with Context(VALIDATE_WITH_CPU=1):
       run_linear(UOp(Ops.LINEAR, src=(sink.call(UOp.variable('factor', 0, 10, dtypes.int32).bind(3), out, x),)), wait=True)
     self.assertEqual(out.buffer.as_memoryview().cast('i').tolist(), [3, 6, 9])
+
+  def test_profile_order(self):
+    out = UOp.new_buffer(Device.DEFAULT, 1, dtypes.int32)
+    scalar = UOp.param(0, dtypes.int32, name='value', vmin_vmax=(0, 10), addrspace=AddrSpace.ALU)
+    p = UOp.param(1, dtypes.int32, 1)
+    sink = p[0].store(scalar).sink(arg=KernelInfo(name='profile_order'), tag=1)
+    start = len(cpu_events)
+    with Context(PROFILE=1):
+      run_linear(UOp(Ops.LINEAR, src=(sink.call(UOp.variable('value', 0, 10, dtypes.int32).bind(5), out),)),
+                 var_vals={'value': 5}, wait=True)
+    event = [e for e in cpu_events[start:] if isinstance(e, ProfilePointEvent) and e.name == 'exec'][-1]
+    self.assertEqual(event.arg['outputs'], (0,))
+    self.assertEqual(event.arg['bufs'], [out.buffer.trace_num])
 
   @needs_second_gpu
   def test_multi_device_scalar_first(self):
